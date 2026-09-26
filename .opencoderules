@@ -1,0 +1,55 @@
+# Reglas de UI/UX del proyecto (marketplace_ucss_ios)
+
+Basado en la skill `ui-ux-pro-max` (`.opencode/skills/ui-ux-pro-max/`). Stack detectado: **Flutter**.
+Usa la skill y su buscador (`python .opencode/skills/ui-ux-pro-max/scripts/search.py`) para detalles antes de diseñar o revisar UI.
+
+## Categorías por prioridad (1 → 10)
+
+| # | Categoría | Impacto | Dominio | Debe cumplir | Anti-patrones |
+|---|-----------|---------|---------|--------------|---------------|
+| 1 | Accesibilidad | CRÍTICO | `ux` | Contraste 4.5:1, texto alternativo, navegación por teclado, labels accesibles | Quitar focus rings, botones solo-icono sin label |
+| 2 | Táctil e interacción | CRÍTICO | `ux` | Tamaño mín. 44×44pt (48dp Android), espaciado 8dp+, feedback de carga | Depender de hover, cambios de estado instantáneos (0ms) |
+| 3 | Rendimiento | ALTO | `ux` | Imágenes optimizadas (WebP/AVIF), lazy loading, reservar espacio (CLS < 0.1) | Layout thrashing, saltos de layout |
+| 4 | Selección de estilo | ALTO | `style`, `product` | Coherencia con el tipo de producto, iconos vectoriales (nunca emoji) | Mezclar estilos al azar, emoji como icono |
+| 5 | Layout y responsive | ALTO | `ux` | Mobile-first, breakpoints, sin scroll horizontal | Anchos fijos en px, desactivar zoom |
+| 6 | Tipografía y color | MEDIO | `typography`, `color` | Base 16px, line-height 1.5, tokens semánticos de color | Texto de cuerpo < 12px, gris sobre gris, hex crudo |
+| 7 | Animación | MEDIO | `ux`, `gsap` | Timing según contexto, el movimiento comunica, continuidad espacial | Una sola duración para todo, animar width/height, sin reduced-motion |
+| 8 | Formularios y feedback | MEDIO | `ux` | Labels visibles, error junto al campo, texto de ayuda, divulgación progresiva | Solo placeholder como label, errores solo arriba |
+| 9 | Navegación | ALTO | `ux` | Atrás predecible, bottom nav ≤ 5, deep linking | Navegación saturada, atrás roto, sin deep links |
+| 10 | Gráficas y datos | BAJO | `chart` | Leyendas, tooltips, colores accesibles | Usar solo color para transmitir significado |
+
+## Jerarquía y espaciado
+- Ritmo de espaciado **4/8dp** consistente en padding, gaps y secciones.
+- Tiers verticales por jerarquía (16/24/32/48). Mismos niveles → mismo espaciado.
+- Ancho de contenido predecible por tipo de dispositivo; gutters adaptativos en landscape y pantallas grandes.
+- Respetar safe areas (notch, status bar, home indicator) en headers, tab bars y CTAs fijos.
+- Contenido scrolleable nunca oculto tras barras fijas (usar content insets).
+
+## Contraste y modo claro/oscuro
+- Texto normal ≥ **4.5:1** en claro y oscuro; 3:1 solo para texto grande o elementos no textuales.
+- Iconos significativos y bordes de control ≥ 3:1.
+- Separadores/bordes y estados (pressed/focus/disabled) visibles en ambos temas.
+- Usar **tokens semánticos de tema** (nada de hex por pantalla).
+- Verificar dark mode de forma independiente; no asumir que los valores de claro aplican.
+
+## Patrones de componentes
+- Iconos: una sola familia y estilo; tamaños como tokens (`icon-sm`, `icon-md` = 24, `icon-lg`); trazo consistente; sin emoji estructural.
+- Botones/tap: feedback pressed (ripple/opacity/elevation) en 80–150ms, sin cambiar bounds ni provocar jitter.
+- Estados: pressed/focus/disabled claros y no interactivos cuando corresponda; semantics nativos (`Button`, `Pressable`).
+- Formularios: label visible (no solo placeholder), error inline junto al campo, summary de errores con foco en submits múltiples.
+- Navegación: atrás predecible, bottom nav ≤ 5 ítems, deep linking.
+- Accesibilidad: orden de foco = orden visual; iconos decorativos ocultos del árbol de accesibilidad; iconos con significado → alternativa textual; controles con nombre accesible y estado (selected/pressed/expanded).
+
+## Checklist antes de entregar UI
+- [ ] Probado en pantalla pequeña (375px) y en landscape.
+- [ ] Verificado con **reduced motion** y tamaño de texto de sistema grande.
+- [ ] Contraste de dark mode comprobado de forma independiente.
+- [ ] Todos los touch targets ≥ 44pt y sin contenido tras safe areas.
+- [ ] Sin emoji como icono; iconos y assets vectoriales coherentes.
+- [ ] Feedback pressed en todo lo tappable; disabled claro.
+- [ ] Texto ≥ 4.5:1 en ambos temas; separadores visibles en ambos.
+- [ ] Ritmo 4/8dp y scroll no oculto tras barras fijas.
+- [ ] Formularios con labels, hints y errores claros; color no es el único indicador.
+- [ ] Focus visible y no oculto por overlays; alternativas a gestos swipe/drag.
+
+Para el detalle completo: `.opencode/skills/ui-ux-pro-max/references/quick-reference.md` y `references/pro-rules.md`.

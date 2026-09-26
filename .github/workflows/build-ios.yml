@@ -1,0 +1,59 @@
+name: Build iOS Simulator for Appetize.io
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-ios-simulator:
+    name: Compilar iOS Simulator (.app.zip)
+    runs-on: macos-14
+    timeout-minutes: 40
+
+    steps:
+      - name: 1. Descargar Código Fuente
+        uses: actions/checkout@v4
+
+      - name: 2. Configurar Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: 3. Instalar Dependencias de Flutter
+        run: flutter pub get
+
+      - name: 4. Compilar App para iOS Simulator (Sin Certificados de Pago)
+        run: flutter build ios --simulator --no-codesign
+
+      - name: 5. Empaquetar Runner.app en formato ZIP
+        run: |
+          cd build/ios/iphonesimulator
+          zip -r Runner.app.zip Runner.app
+          ls -lh Runner.app.zip
+
+      - name: 6. Publicar Artefacto ZIP en GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: Runner-iOS-Simulator
+          path: build/ios/iphonesimulator/Runner.app.zip
+          retention-days: 14
+
+      - name: 7. Subida Automática a Appetize.io (Opcional si se define APPETIZE_API_TOKEN)
+        if: env.APPETIZE_API_TOKEN != ''
+        env:
+          APPETIZE_API_TOKEN: ${{ secrets.APPETIZE_API_TOKEN }}
+          PUBLIC_KEY: ${{ secrets.APPETIZE_PUBLIC_KEY }}
+        run: |
+          echo "Subiendo a Appetize.io..."
+          if [ -n "$PUBLIC_KEY" ]; then
+            curl -v https://${APPETIZE_API_TOKEN}@api.appetize.io/v1/apps/${PUBLIC_KEY} \
+              -F "file=@build/ios/iphonesimulator/Runner.app.zip" \
+              -F "platform=ios"
+          else
+            curl -v https://${APPETIZE_API_TOKEN}@api.appetize.io/v1/apps \
+              -F "file=@build/ios/iphonesimulator/Runner.app.zip" \
+              -F "platform=ios"
+          fi
+        continue-on-error: true
