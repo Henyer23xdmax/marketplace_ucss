@@ -14,8 +14,18 @@ class SupabaseConfig {
     defaultValue: 'sb_publishable_B0v5ENiK-UySzHhMZrTAow_BF4viEVA',
   );
 
-  /// Nombre del bucket público en Supabase Storage
+  /// Nombre del bucket público en Supabase Storage (imágenes de producto).
   static const String productImagesBucket = 'product-images';
+
+  /// Bucket PRIVADO para los comprobantes de pago (Yape/Plin).
+  ///
+  /// No debe ser público: un comprobante expone nombre, monto, hora y número de
+  /// operación. Se sirve mediante URLs firmadas de corta duración generadas en
+  /// [StorageService.createVoucherSignedUrl].
+  static const String vouchersBucket = 'payment-vouchers';
+
+  /// Vigencia de las URLs firmadas de comprobantes, en segundos (15 minutos).
+  static const int voucherSignedUrlTtl = 900;
 
   /// Inicializa Supabase para la aplicación limpiando rutas
   static Future<void> initialize({
@@ -34,28 +44,10 @@ class SupabaseConfig {
 
     final key = (customAnonKey ?? supabaseAnonKey).trim();
 
-    await Supabase.initialize(url: cleanUrl, anonKey: key);
+    await Supabase.initialize(url: cleanUrl, publishableKey: key);
     debugPrint('⚡ Supabase inicializado con URL: $cleanUrl');
   }
 
   /// Instancia directa del cliente de Supabase
   static SupabaseClient get client => Supabase.instance.client;
-
-  /// Método para verificar la conexión directa a la base de datos
-  static Future<Map<String, dynamic>> testConnection() async {
-    try {
-      final response = await client.from('categories').select().limit(3);
-      return {
-        'success': true,
-        'message': '¡Conectado exitosamente con Supabase!',
-        'categories_found': (response as List).length,
-        'data': response,
-      };
-    } catch (e) {
-      return {
-        'success': false,
-        'message': 'Error al conectar: $e',
-      };
-    }
-  }
 }

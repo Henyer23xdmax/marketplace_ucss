@@ -308,12 +308,16 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final isDark = Theme.of(context).brightness == Brightness.dark;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
               'No se pudo rechazar: ${e.toString().replaceAll('Exception: ', '')}',
+              style: TextStyle(
+                color: isDark ? AppColors.darkBackground : AppColors.onPrimary,
+              ),
             ),
-            backgroundColor: AppColors.error,
+            backgroundColor: isDark ? AppColors.darkError : AppColors.error,
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -344,12 +348,16 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final isDark = Theme.of(context).brightness == Brightness.dark;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
               'No se pudo actualizar: ${e.toString().replaceAll('Exception: ', '')}',
+              style: TextStyle(
+                color: isDark ? AppColors.darkBackground : AppColors.onPrimary,
+              ),
             ),
-            backgroundColor: AppColors.error,
+            backgroundColor: isDark ? AppColors.darkError : AppColors.error,
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -374,8 +382,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final bubbleColor = isDark
         ? AppColors.darkBackground
         : AppColors.background;
-    final hasVoucher =
-        payment.voucherUrl != null && payment.voucherUrl!.isNotEmpty;
+    final voucherRef = payment.voucherRef;
+    final hasVoucher = voucherRef != null && voucherRef.isNotEmpty;
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -410,24 +418,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
           ),
           if (hasVoucher) ...[
             const SizedBox(height: 10),
-            GestureDetector(
-              onTap: () => _showVoucher(payment.voucherUrl!),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.network(
-                  payment.voucherUrl!,
-                  width: 72,
-                  height: 72,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => Container(
-                    width: 72,
-                    height: 72,
-                    alignment: Alignment.center,
-                    color: borderColor,
-                    child: Icon(CupertinoIcons.photo, color: textSecondary),
-                  ),
-                ),
-              ),
+            _VoucherThumbnail(
+              payment: payment,
+              onTap: () => _showVoucher(payment),
             ),
             const SizedBox(height: 4),
             Text(
@@ -491,7 +484,24 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     );
   }
 
-  void _showVoucher(String url) {
+  /// Abre el comprobante a pantalla completa.
+  ///
+  /// El bucket es privado, así que primero hay que resolver una URL firmada
+  /// válida; los pagos antiguos migrados a mano usan la URL absoluta tal cual.
+  Future<void> _showVoucher(Payment payment) async {
+    final signed = await _resolveVoucherUrl(payment);
+    if (!mounted) return;
+
+    if (signed == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo cargar el comprobante'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
@@ -499,7 +509,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         insetPadding: const EdgeInsets.all(16),
         child: InteractiveViewer(
           child: Image.network(
-            url,
+            signed,
             fit: BoxFit.contain,
             errorBuilder: (_, _, _) => const Icon(
               CupertinoIcons.photo,
@@ -510,6 +520,18 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         ),
       ),
     );
+  }
+
+  /// Devuelve una URL servible para el comprobante: firma la URL bajo demanda
+  /// si vive en el bucket privado, o devuelve la URL absoluta si es legacy.
+  Future<String?> _resolveVoucherUrl(Payment payment) async {
+    if (payment.voucherIsPrivate) {
+      final url = await ref.read(
+        voucherSignedUrlProvider(payment.voucherPath!).future,
+      );
+      return url;
+    }
+    return payment.voucherUrl;
   }
 
   Widget _buildSellerActions(Order order) {
@@ -601,6 +623,85 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       child: Text(
         label,
         style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+}
+
+/// Miniatura del comprobante de pago.
+///
+/// Firma la URL bajo demanda porque el bucket `payment-vouchers` es privado.
+/// Mientras la URL se resuelve muestra un indicador; si falla (o expiró),
+/// muestra un placeholder con el ícono de foto.
+class _VoucherThumbnail extends ConsumerWidget {
+  final Payment payment;
+  final VoidCallback onTap;
+
+  const _VoucherThumbnail({required this.payment, required this.onTap});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderColor = isDark ? AppColors.darkBorder : AppColors.border;
+    final textSecondary = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.textSecondary;
+
+    Widget placeholder(IconData icon) => Container(
+          width: 72,
+          height: 72,
+          alignment: Alignment.center,
+          color: borderColor,
+          child: Icon(icon, color: textSecondary, size: 22),
+        );
+
+    // Los pagos legacy guardan una URL absoluta: se puede pintar directo.
+    if (!payment.voucherIsPrivate) {
+      final url = payment.voucherUrl;
+      if (url == null || url.isEmpty) {
+        return placeholder(CupertinoIcons.photo);
+      }
+      return GestureDetector(
+        onTap: onTap,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.network(
+            url,
+            width: 72,
+            height: 72,
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => placeholder(CupertinoIcons.photo),
+          ),
+        ),
+      );
+    }
+
+    final signedAsync = ref.watch(voucherSignedUrlProvider(payment.voucherPath!));
+
+    return GestureDetector(
+      onTap: onTap,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: signedAsync.when(
+          data: (url) {
+            if (url == null) return placeholder(CupertinoIcons.exclamationmark);
+            return Image.network(
+              url,
+              width: 72,
+              height: 72,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => placeholder(CupertinoIcons.photo),
+            );
+          },
+          loading: () => Container(
+            width: 72,
+            height: 72,
+            alignment: Alignment.center,
+            color: borderColor,
+            child: const CupertinoActivityIndicator(radius: 9),
+          ),
+          error: (_, _) => placeholder(CupertinoIcons.photo),
+        ),
       ),
     );
   }

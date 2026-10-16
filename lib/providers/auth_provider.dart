@@ -2,6 +2,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/profile.dart';
 
+/// Dominio institucional permitido para usar UCSS Market.
+///
+/// Esta comprobación es solo de EXPERIENCIA DE USURIO: evita mandar al
+/// formulario. La barrera real es el trigger `enforce_ucss_email` sobre
+/// `auth.users` en PostgreSQL (ver `sql/04_ucss_email_trigger.sql`), que
+/// impide crear la cuenta aunque se llame a la API de Supabase directamente.
+const String kUcssEmailDomain = '@ucss.pe';
+
+/// `true` si el correo pertenece al dominio institucional de UCSS.
+bool isUcssEmail(String email) =>
+    email.trim().toLowerCase().endsWith(kUcssEmailDomain);
+
 final authStateProvider = StreamProvider<AuthState>((ref) {
   return Supabase.instance.client.auth.onAuthStateChange;
 });
@@ -45,8 +57,8 @@ class AuthController extends StateNotifier<AsyncValue<void>> {
   Future<void> signIn({required String email, required String password}) async {
     state = const AsyncValue.loading();
     try {
-      if (!email.trim().toLowerCase().endsWith('@ucss.pe')) {
-        throw Exception('Acceso denegado: Se requiere correo institucional @ucss.pe');
+      if (!isUcssEmail(email)) {
+        throw Exception('Acceso denegado: Se requiere correo institucional $kUcssEmailDomain');
       }
 
       await Supabase.instance.client.auth.signInWithPassword(
@@ -71,8 +83,8 @@ class AuthController extends StateNotifier<AsyncValue<void>> {
   }) async {
     state = const AsyncValue.loading();
     try {
-      if (!email.trim().toLowerCase().endsWith('@ucss.pe')) {
-        throw Exception('Solo estudiantes UCSS con correo @ucss.pe pueden registrarse');
+      if (!isUcssEmail(email)) {
+        throw Exception('Solo estudiantes UCSS con correo $kUcssEmailDomain pueden registrarse');
       }
 
       final response = await Supabase.instance.client.auth.signUp(
@@ -110,8 +122,8 @@ class AuthController extends StateNotifier<AsyncValue<void>> {
   Future<void> resetPassword({required String email}) async {
     state = const AsyncValue.loading();
     try {
-      if (!email.trim().toLowerCase().endsWith('@ucss.pe')) {
-        throw Exception('Usa tu correo institucional @ucss.pe');
+      if (!isUcssEmail(email)) {
+        throw Exception('Usa tu correo institucional $kUcssEmailDomain');
       }
 
       await Supabase.instance.client.auth.resetPasswordForEmail(email.trim());

@@ -71,6 +71,7 @@ class ProductCard extends ConsumerWidget {
                             .read(favoritesProvider.notifier)
                             .toggleFavorite(product.id);
                       },
+                      minimumSize: const Size(44, 44),
                       child: Semantics(
                         button: true,
                         label: isFavorite
@@ -105,7 +106,6 @@ class ProductCard extends ConsumerWidget {
                           ),
                         ),
                       ),
-                      minimumSize: const Size(44, 44),
                     ),
                   ),
                   // Badge de Stock

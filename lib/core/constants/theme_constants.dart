@@ -15,7 +15,6 @@ class AppColors {
 
   static const Color background = Color(0xFFFAF9F6); // papel cálido
   static const Color surface = Color(0xFFFFFFFF);
-  static const Color card = Color(0xFFFFFFFF);
 
   static const Color textPrimary = Color(0xFF14181F); // 16.9:1 sobre fondo
   static const Color textSecondary = Color(0xFF4B5563); // 7.18:1
@@ -29,10 +28,8 @@ class AppColors {
   // ========================================================
   static const Color darkBackground = Color(0xFF10151C);
   static const Color darkSurface = Color(0xFF1A222D);
-  static const Color darkCard = Color(0xFF1A222D);
   static const Color darkText = Color(0xFFF5F5F4); // 16.8:1
   static const Color darkTextSecondary = Color(0xFFA3ADBA); // 7.05:1 sobre surface
-  static const Color darkTextMuted = Color(0xFF6B7280);
 
   static const Color darkBorder = Color(0xFF2C3745); // decorativo
   static const Color darkBorderStrong = Color(0xFF64748B); // 3.37:1 controles
@@ -40,7 +37,6 @@ class AppColors {
   static const Color darkPrimary = Color(0xFF9CC0E7); // 9.69:1 sobre fondo oscuro
   static const Color onDarkPrimary = Color(0xFF10151C); // 9.69:1 sobre darkPrimary
   static const Color darkSecondary = Color(0xFFD9A94F); // 8.5:1 sobre fondo oscuro
-  static const Color darkAccent = Color(0xFF9CC0E7);
 
   // --- Estados (claro) ---
   static const Color success = Color(0xFF15803D); // 5.02:1 sobre blanco
@@ -62,24 +58,6 @@ class AppColors {
   // --- Métodos de Pago Populares Perú ---
   static const Color yapePurple = Color(0xFF720E9E);
   static const Color plinCyan = Color(0xFF00A3FF);
-
-  // ========================================================
-  // 🔄 ALIAS DE COMPATIBILIDAD CON VISTAS EXISTENTES
-  // ========================================================
-  static const Color ucssNavy = primary;
-  static const Color ucssNavyDark = primaryDark;
-  static const Color ucssGold = secondary;
-  static const Color ucssGoldLight = Color(0xFFEED9A8);
-  static const Color ucssAccent = secondaryDark;
-
-  static const Color iosBackground = background;
-  static const Color iosCard = card;
-  static const Color iosTextPrimary = textPrimary;
-  static const Color iosTextSecondary = textSecondary;
-  static const Color iosBorder = border;
-  static const Color iosGreen = success;
-  static const Color iosRed = error;
-  static const Color iosOrange = warning;
 }
 
 // ========================================================

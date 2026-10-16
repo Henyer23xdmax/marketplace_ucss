@@ -118,49 +118,31 @@ final productsProvider = FutureProvider<List<Product>>((ref) async {
   final selectedCategory = ref.watch(selectedCategoryProvider);
   final searchQuery = ref.watch(searchQueryProvider).trim().toLowerCase();
 
-  try {
-    var query = Supabase.instance.client
-        .from('products')
-        .select('''
-          *,
-          product_images (*),
-          seller:profiles!products_seller_id_fkey (*),
-          category:categories (*)
-        ''')
-        .eq('status', 'disponible')
-        .gt('stock', 0);
+  var query = Supabase.instance.client
+      .from('products')
+      .select(
+        '*, product_images (*), seller:profiles!products_seller_id_fkey (*), category:categories (*)',
+      )
+      .eq('status', 'disponible')
+      .gt('stock', 0);
 
-    if (selectedCategory != null) {
-      query = query.eq('category_id', selectedCategory);
-    }
-
-    final response = await query.order('created_at', ascending: false);
-    List<Product> products = (response as List)
-        .map((item) => Product.fromJson(item as Map<String, dynamic>))
-        .toList();
-
-    if (searchQuery.isNotEmpty) {
-      products = products.where((p) {
-        return p.title.toLowerCase().contains(searchQuery) ||
-            p.description.toLowerCase().contains(searchQuery);
-      }).toList();
-    }
-
-    if (products.isNotEmpty) return products;
-  } catch (e) {
-    debugPrint('Nota products Supabase: $e');
+  if (selectedCategory != null) {
+    query = query.eq('category_id', selectedCategory);
   }
 
-  // Fallback con productos de muestra que tienen UUIDs válidos para pruebas
-  return _mockUcssProducts.where((p) {
-    final matchesCategory =
-        selectedCategory == null || p.categoryId == selectedCategory;
-    final matchesSearch =
-        searchQuery.isEmpty ||
-        p.title.toLowerCase().contains(searchQuery) ||
-        p.description.toLowerCase().contains(searchQuery);
-    return matchesCategory && matchesSearch;
-  }).toList();
+  final response = await query.order('created_at', ascending: false);
+  var products = (response as List)
+      .map((item) => Product.fromJson(item as Map<String, dynamic>))
+      .toList();
+
+  if (searchQuery.isNotEmpty) {
+    products = products.where((p) {
+      return p.title.toLowerCase().contains(searchQuery) ||
+          p.description.toLowerCase().contains(searchQuery);
+    }).toList();
+  }
+
+  return products;
 });
 
 class ProductCreationNotifier extends StateNotifier<AsyncValue<void>> {
@@ -239,41 +221,3 @@ final productCreationProvider =
     StateNotifierProvider<ProductCreationNotifier, AsyncValue<void>>((ref) {
       return ProductCreationNotifier();
     });
-
-// Datos de demostración locales con UUIDs válidos estándar
-final List<Product> _mockUcssProducts = [
-  Product(
-    id: 'c0000000-0000-0000-0000-000000000001',
-    sellerId: 'd0000000-0000-0000-0000-000000000001',
-    categoryId: 'b0000000-0000-0000-0000-000000000001',
-    title: 'Cálculo de Una Variable - Stewart 8va Ed.',
-    description: 'Libro en excelente estado, sin subrayados. Muy útil para estudiantes de Ingeniería y Economía de los primeros ciclos en UCSS.',
-    price: 45.0,
-    stock: 1,
-    status: 'disponible',
-    images: [
-      ProductImage(
-        id: 'img1',
-        productId: 'c0000000-0000-0000-0000-000000000001',
-        imageUrl: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=500&q=80',
-      ),
-    ],
-  ),
-  Product(
-    id: 'c0000000-0000-0000-0000-000000000002',
-    sellerId: 'd0000000-0000-0000-0000-000000000002',
-    categoryId: 'b0000000-0000-0000-0000-000000000002',
-    title: 'Calculadora Científica Casio fx-991LAX',
-    description: 'Original ClassWiz con panel solar. Apta para exámenes de matemáticas, física y estadística en UCSS.',
-    price: 85.0,
-    stock: 2,
-    status: 'disponible',
-    images: [
-      ProductImage(
-        id: 'img2',
-        productId: 'c0000000-0000-0000-0000-000000000002',
-        imageUrl: 'https://images.unsplash.com/photo-1594980596870-8aa52a78d8cd?w=500&q=80',
-      ),
-    ],
-  ),
-];

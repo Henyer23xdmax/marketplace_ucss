@@ -1,7 +1,4 @@
-import 'dart:io';
-
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
@@ -9,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../core/constants/theme_constants.dart';
 import '../../models/category.dart';
 import '../../providers/catalog_provider.dart';
+import '../../widgets/local_image_preview.dart';
 
 class CreateProductScreen extends ConsumerStatefulWidget {
   const CreateProductScreen({super.key});
@@ -151,10 +149,16 @@ class _CreateProductScreenState extends ConsumerState<CreateProductScreen> {
   }
 
   void _showSnack(String msg, {bool isError = false}) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final background = isError
+        ? (isDark ? AppColors.darkError : AppColors.error)
+        : (isDark ? AppColors.darkSuccess : AppColors.success);
+    final foreground = isDark ? AppColors.darkBackground : AppColors.onPrimary;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(msg),
-        backgroundColor: isError ? AppColors.error : AppColors.success,
+        content: Text(msg, style: TextStyle(color: foreground)),
+        backgroundColor: background,
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -164,6 +168,15 @@ class _CreateProductScreenState extends ConsumerState<CreateProductScreen> {
   Widget build(BuildContext context) {
     final categoriesAsync = ref.watch(categoriesProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderColor = isDark ? AppColors.darkBorder : AppColors.border;
+    final errorColor = isDark ? AppColors.darkError : AppColors.error;
+    final warningColor = isDark ? AppColors.darkWarning : AppColors.warning;
+    final warnContainer = isDark
+        ? AppColors.darkWarningContainer
+        : AppColors.warningContainer;
+    final onWarnContainer = isDark
+        ? AppColors.onDarkWarningContainer
+        : AppColors.onWarningContainer;
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -256,12 +269,24 @@ class _CreateProductScreenState extends ConsumerState<CreateProductScreen> {
                             ),
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(14),
-                              child: kIsWeb
-                                  ? Image.network(image.path, fit: BoxFit.cover)
-                                  : Image.file(
-                                      File(image.path),
-                                      fit: BoxFit.cover,
-                                    ),
+                              child: LocalImagePreview(
+                                file: image,
+                                width: 100,
+                                height: 100,
+                                placeholder: Container(
+                                  width: 100,
+                                  height: 100,
+                                  color: isDark
+                                      ? AppColors.darkBackground
+                                      : AppColors.background,
+                                  child: Icon(
+                                    CupertinoIcons.photo,
+                                    color: isDark
+                                        ? AppColors.darkTextSecondary
+                                        : AppColors.textSecondary,
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
                           Positioned(
@@ -330,22 +355,25 @@ class _CreateProductScreenState extends ConsumerState<CreateProductScreen> {
                           return Container(
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
-                              color: AppColors.warningContainer,
+                              color: warnContainer,
                               borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: AppColors.border),
+                              border: Border.all(color: borderColor),
                             ),
                             child: Row(
                               children: [
-                                const Icon(
+                                Icon(
                                   CupertinoIcons.exclamationmark_triangle,
-                                  color: AppColors.warning,
+                                  color: warningColor,
                                   size: 20,
                                 ),
                                 const SizedBox(width: 10),
-                                const Expanded(
+                                Expanded(
                                   child: Text(
                                     'No hay categorías en la base de datos',
-                                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: onWarnContainer,
+                                    ),
                                   ),
                                 ),
                                 CupertinoButton(
@@ -359,6 +387,11 @@ class _CreateProductScreenState extends ConsumerState<CreateProductScreen> {
                         }
 
                         return DropdownButtonFormField<String>(
+                          // Se usa `value` (no `initialValue`) porque
+                          // FormField.didUpdateWidget no sincroniza cambios de
+                          // `initialValue`: con él, _resetForm() no limpiaría la
+                          // categoría mostrada.
+                          // ignore: deprecated_member_use
                           value: _selectedCategoryId,
                           isExpanded: true,
                           dropdownColor: isDark ? AppColors.darkSurface : AppColors.surface,
@@ -410,17 +443,24 @@ class _CreateProductScreenState extends ConsumerState<CreateProductScreen> {
                       error: (err, _) => Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: AppColors.error.withValues(alpha: 0.1),
+                          color: errorColor.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Row(
                           children: [
-                            const Icon(CupertinoIcons.clear_circled, color: AppColors.error, size: 18),
+                            Icon(
+                              CupertinoIcons.clear_circled,
+                              color: errorColor,
+                              size: 18,
+                            ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
                                 'Error al cargar categorías: $err',
-                                style: const TextStyle(fontSize: 12, color: AppColors.error),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: errorColor,
+                                ),
                               ),
                             ),
                             CupertinoButton(
@@ -449,10 +489,12 @@ class _CreateProductScreenState extends ConsumerState<CreateProductScreen> {
                               fillColor: isDark ? AppColors.darkBackground : AppColors.background,
                             ),
                             validator: (v) {
-                              if (v == null || v.isEmpty)
+                              if (v == null || v.isEmpty) {
                                 return 'Ingresa el precio';
-                              if (double.tryParse(v) == null)
+                              }
+                              if (double.tryParse(v) == null) {
                                 return 'Precio inválido';
+                              }
                               return null;
                             },
                           ),
@@ -468,10 +510,12 @@ class _CreateProductScreenState extends ConsumerState<CreateProductScreen> {
                               fillColor: isDark ? AppColors.darkBackground : AppColors.background,
                             ),
                             validator: (v) {
-                              if (v == null || v.isEmpty)
+                              if (v == null || v.isEmpty) {
                                 return 'Ingresa el stock';
-                              if (int.tryParse(v) == null)
+                              }
+                              if (int.tryParse(v) == null) {
                                 return 'Número inválido';
+                              }
                               return null;
                             },
                           ),

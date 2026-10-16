@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 
 import '../models/order.dart';
 
@@ -18,16 +17,6 @@ class ReceiptService {
   /// Devuelve los bytes del PDF para previsualizarlo dentro de la app.
   static Future<Uint8List> buildOrderReceipt(Order order) {
     return _buildDocument(order).save();
-  }
-
-  /// Genera la constancia interna del pedido y abre el diálogo para
-  /// compartirla o imprimirla como PDF.
-  static Future<void> shareOrderReceipt(Order order) async {
-    final doc = _buildDocument(order);
-    await Printing.sharePdf(
-      bytes: await doc.save(),
-      filename: 'constancia_pedido_${_shortId(order.id)}.pdf',
-    );
   }
 
   static String _shortId(String id) =>

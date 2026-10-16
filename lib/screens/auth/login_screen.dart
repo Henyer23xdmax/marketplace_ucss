@@ -5,6 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants/theme_constants.dart';
 import '../../providers/auth_provider.dart';
+import 'auth_widgets.dart';
+import 'forgot_password_dialog.dart';
+import 'widgets/brand_header.dart';
+import 'widgets/premium_field.dart';
+import 'widgets/primary_button.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -20,11 +25,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _passwordCtrl = TextEditingController();
   final _confirmCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
-  final _careerCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
 
   final _nameFocus = FocusNode();
-  final _careerFocus = FocusNode();
   final _emailFocus = FocusNode();
   final _passwordFocus = FocusNode();
   final _confirmFocus = FocusNode();
@@ -42,6 +45,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _submitted = false;
   final Set<String> _touched = {};
   bool _switchingMode = false;
+
+  /// Se incrementa en cada cambio de modo para que los campos limpien el error
+  /// que tengan pegado (ver [PremiumTextField.validationEpoch]).
+  int _validationEpoch = 0;
 
   static final _emailRegExp = RegExp(r'^[^@\s]+@ucss\.pe$');
 
@@ -62,10 +69,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     _passwordCtrl.dispose();
     _confirmCtrl.dispose();
     _nameCtrl.dispose();
-    _careerCtrl.dispose();
     _phoneCtrl.dispose();
     _nameFocus.dispose();
-    _careerFocus.dispose();
     _emailFocus.dispose();
     _passwordFocus.dispose();
     _confirmFocus.dispose();
@@ -123,6 +128,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       return _showRequired('password') ? 'Ingresa tu contraseña' : null;
     }
     if (value.length < 6) return 'Debe tener al menos 6 caracteres';
+    // Al iniciar sesión solo se verifica que no esté vacía: la política de
+    // contraseñas applies únicamente al CREAR la cuenta, no a cada ingreso.
+    if (_isSignUp && scorePassword(value) < 2) {
+      return 'Combina letras y números para una contraseña más segura';
+    }
     return null;
   }
 
@@ -134,21 +144,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     return null;
   }
 
-  int get _passwordScore {
-    final value = _passwordCtrl.text;
-    var score = 0;
-    if (value.length >= 6) score++;
-    if (value.length >= 10) score++;
-    if (RegExp(r'[A-Z]').hasMatch(value) && RegExp(r'[a-z]').hasMatch(value)) {
-      score++;
-    }
-    if (RegExp(r'[0-9]').hasMatch(value) ||
-        RegExp(r'[^A-Za-z0-9]').hasMatch(value)) {
-      score++;
-    }
-    return score;
-  }
-
   void _setMode(bool signUp) {
     if (_isSignUp == signUp) return;
     _switchingMode = true;
@@ -157,6 +152,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _submitted = false;
       _touched.clear();
       _termsError = false;
+      _validationEpoch++;
     });
     _formKey.currentState?.reset();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -173,22 +169,34 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
 
     // Enfoca el primer campo inválido en orden visual.
+    //
+    // OJO: los validadores de los PremiumTextField devuelven `null` a propósito
+    // (el error lo pinta el propio widget, no el FormField). Por eso
+    // `Form.validate()` SIEMPRE devuelve true y su resultado no sirve para
+    // decidir. La validez se calcula aquí con los mismos validadores.
     FocusNode? firstInvalid;
-    if (_isSignUp && _validateName(_nameCtrl.text) != null) {
-      firstInvalid ??= _nameFocus;
-    }
-    if (_validateEmail(_emailCtrl.text) != null) {
-      firstInvalid ??= _emailFocus;
-    }
-    if (_validatePassword(_passwordCtrl.text) != null) {
-      firstInvalid ??= _passwordFocus;
-    }
-    if (_isSignUp && _validateConfirm(_confirmCtrl.text) != null) {
-      firstInvalid ??= _confirmFocus;
+    var allValid = true;
+
+    void check(bool isSignUpOnly, FocusNode node, String? error) {
+      if (error == null) return;
+      if (isSignUpOnly && !_isSignUp) return;
+      allValid = false;
+      firstInvalid ??= node;
     }
 
-    final fieldsValid = _formKey.currentState!.validate();
-    if (!fieldsValid || (_isSignUp && !_acceptedTerms)) {
+    if (_isSignUp) {
+      check(true, _nameFocus, _validateName(_nameCtrl.text));
+    }
+    check(false, _emailFocus, _validateEmail(_emailCtrl.text));
+    check(false, _passwordFocus, _validatePassword(_passwordCtrl.text));
+    if (_isSignUp) {
+      check(true, _confirmFocus, _validateConfirm(_confirmCtrl.text));
+    }
+
+    final termsOk = !_isSignUp || _acceptedTerms;
+    if (!allValid || !termsOk) {
+      // Dispara los validadores para que cada campo muestre su error.
+      _formKey.currentState?.validate();
       firstInvalid?.requestFocus();
       return;
     }
@@ -196,7 +204,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final email = _emailCtrl.text.trim();
     final password = _passwordCtrl.text;
     final fullName = _nameCtrl.text.trim();
-    final career = _careerCtrl.text.trim();
     final phone = _phoneCtrl.text.trim();
 
     setState(() => _isLoading = true);
@@ -208,7 +215,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           email: email,
           password: password,
           fullName: fullName,
-          career: career.isNotEmpty ? career : null,
           phone: phone.isNotEmpty ? phone : null,
         );
         if (mounted) {
@@ -216,7 +222,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           if (hasSession) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: const Text('¡Cuenta creada exitosamente!'),
+                content: Text(
+                  '¡Cuenta creada exitosamente!',
+                  style: TextStyle(
+                    color: _isDark
+                        ? AppColors.darkBackground
+                        : AppColors.onPrimary,
+                  ),
+                ),
                 backgroundColor: _isDark
                     ? AppColors.darkSuccess
                     : AppColors.success,
@@ -245,7 +258,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
+        content: Text(
+          message,
+          style: TextStyle(
+            color: _isDark ? AppColors.darkBackground : AppColors.onPrimary,
+          ),
+        ),
         backgroundColor: _isDark ? AppColors.darkError : AppColors.error,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -254,96 +272,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _showForgotPasswordDialog() async {
-    final emailCtrl = TextEditingController(text: _emailCtrl.text.trim());
-    await showCupertinoDialog(
-      context: context,
-      builder: (ctx) {
-        String? error;
-        bool sending = false;
-        return StatefulBuilder(
-          builder: (ctx, setLocal) {
-            return CupertinoAlertDialog(
-              title: const Text('Recuperar contraseña'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const SizedBox(height: 6),
-                  const Text(
-                    'Te enviaremos un enlace a tu correo institucional.',
-                  ),
-                  const SizedBox(height: 12),
-                  CupertinoTextField(
-                    controller: emailCtrl,
-                    keyboardType: TextInputType.emailAddress,
-                    autofillHints: const [AutofillHints.email],
-                    placeholder: 'tu_codigo@ucss.pe',
-                    textInputAction: TextInputAction.done,
-                  ),
-                  if (error != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      error!,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: _isDark ? AppColors.darkError : AppColors.error,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-              actions: [
-                CupertinoDialogAction(
-                  child: const Text('Cancelar'),
-                  onPressed: () => Navigator.of(ctx).pop(),
-                ),
-                CupertinoDialogAction(
-                  onPressed: sending
-                      ? null
-                      : () async {
-                          final email = emailCtrl.text.trim().toLowerCase();
-                          if (!_emailRegExp.hasMatch(email)) {
-                            setLocal(() => error = 'Usa tu correo @ucss.pe');
-                            return;
-                          }
-                          setLocal(() {
-                            sending = true;
-                            error = null;
-                          });
-                          try {
-                            await ref
-                                .read(authControllerProvider.notifier)
-                                .resetPassword(email: email);
-                            if (ctx.mounted) Navigator.of(ctx).pop();
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Revisa tu correo para restablecer la contraseña.',
-                                  ),
-                                ),
-                              );
-                            }
-                          } catch (e) {
-                            setLocal(() {
-                              sending = false;
-                              error = e.toString().replaceAll(
-                                'Exception: ',
-                                '',
-                              );
-                            });
-                          }
-                        },
-                  child: sending
-                      ? const CupertinoActivityIndicator()
-                      : const Text('Enviar'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+    final sent = await showForgotPasswordDialog(
+      context,
+      initialEmail: _emailCtrl.text.trim(),
     );
-    emailCtrl.dispose();
+
+    if (sent && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Revisa tu correo para restablecer la contraseña.',
+          ),
+        ),
+      );
+    }
   }
 
   void _showInfoDialog(String title, String body) {
@@ -381,9 +323,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final accent = isDark ? AppColors.darkPrimary : AppColors.primary;
     final successColor = isDark ? AppColors.darkSuccess : AppColors.success;
     final errorColor = isDark ? AppColors.darkError : AppColors.error;
+    final warningColor = isDark ? AppColors.darkWarning : AppColors.warning;
 
     if (_awaitingConfirmation) {
-      return _buildConfirmationView(
+      return AuthConfirmationView(
+        pendingEmail: _pendingEmail,
+        onBackToLogin: () => setState(() {
+          _awaitingConfirmation = false;
+          _isSignUp = false;
+          _submitted = false;
+          _touched.clear();
+          _acceptedTerms = false;
+          _termsError = false;
+          _validationEpoch++;
+        }),
         textPrimary: textPrimary,
         textSecondary: textSecondary,
         accent: accent,
@@ -402,167 +355,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // Insignia / Logo UCSS (entrada fade + escala)
-                TweenAnimationBuilder<double>(
-                  tween: Tween(begin: 0, end: 1),
-                  duration: reduceMotion
-                      ? Duration.zero
-                      : const Duration(milliseconds: 300),
-                  curve: Curves.easeOutCubic,
-                  builder: (context, t, child) => Opacity(
-                    opacity: t,
-                    child: Transform.scale(
-                      scale: 0.95 + 0.05 * t,
-                      child: child,
-                    ),
-                  ),
-                  child: Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      color: isDark ? AppColors.darkSurface : AppColors.primary,
-                      borderRadius: BorderRadius.circular(22),
-                      border: isDark
-                          ? Border.all(color: AppColors.darkBorder)
-                          : null,
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.shadow.withValues(
-                            alpha: isDark ? 0.3 : 0.15,
-                          ),
-                          blurRadius: 16,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: Center(
-                      child: Icon(
-                        CupertinoIcons.book_solid,
-                        color: isDark
-                            ? AppColors.darkSecondary
-                            : AppColors.secondary,
-                        size: 40,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'UCSS MARKET',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                    color: textPrimary,
-                    letterSpacing: -0.5,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Marketplace Oficial de Estudiantes UCSS',
-                  style: TextStyle(fontSize: 14, color: textSecondary),
-                ),
-                const SizedBox(height: 28),
+                BrandHeader(isDark: isDark),
+                const SizedBox(height: 32),
 
-                // Selector Segmentado Estilo iOS
-                Container(
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: isDark ? AppColors.darkBackground : AppColors.border,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  padding: const EdgeInsets.all(3),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Semantics(
-                          button: true,
-                          selected: !_isSignUp,
-                          label: 'Iniciar Sesión',
-                          child: GestureDetector(
-                            onTap: () => _setMode(false),
-                            child: AnimatedContainer(
-                              duration: animDuration,
-                              curve: Curves.easeOut,
-                              padding: const EdgeInsets.symmetric(vertical: 8),
-                              decoration: BoxDecoration(
-                                color: !_isSignUp
-                                    ? surfaceColor
-                                    : Colors.transparent,
-                                borderRadius: BorderRadius.circular(10),
-                                boxShadow: !_isSignUp
-                                    ? [
-                                        BoxShadow(
-                                          color: AppColors.shadow.withValues(
-                                            alpha: 0.08,
-                                          ),
-                                          blurRadius: 4,
-                                        ),
-                                      ]
-                                    : null,
-                              ),
-                              child: Text(
-                                'Iniciar Sesión',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontWeight: !_isSignUp
-                                      ? FontWeight.w600
-                                      : FontWeight.normal,
-                                  color: !_isSignUp
-                                      ? textPrimary
-                                      : textSecondary,
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        child: Semantics(
-                          button: true,
-                          selected: _isSignUp,
-                          label: 'Crear Cuenta',
-                          child: GestureDetector(
-                            onTap: () => _setMode(true),
-                            child: AnimatedContainer(
-                              duration: animDuration,
-                              curve: Curves.easeOut,
-                              padding: const EdgeInsets.symmetric(vertical: 8),
-                              decoration: BoxDecoration(
-                                color: _isSignUp
-                                    ? surfaceColor
-                                    : Colors.transparent,
-                                borderRadius: BorderRadius.circular(10),
-                                boxShadow: _isSignUp
-                                    ? [
-                                        BoxShadow(
-                                          color: AppColors.shadow.withValues(
-                                            alpha: 0.08,
-                                          ),
-                                          blurRadius: 4,
-                                        ),
-                                      ]
-                                    : null,
-                              ),
-                              child: Text(
-                                'Crear Cuenta',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontWeight: _isSignUp
-                                      ? FontWeight.w600
-                                      : FontWeight.normal,
-                                  color: _isSignUp
-                                      ? textPrimary
-                                      : textSecondary,
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                AuthModeSwitch(
+                  isSignUp: _isSignUp,
+                  isDark: isDark,
+                  onChanged: _setMode,
                 ),
                 const SizedBox(height: 20),
 
@@ -591,80 +390,57 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         child: Column(
                           children: [
                             if (_isSignUp) ...[
-                              TextFormField(
+                              PremiumTextField(
                                 controller: _nameCtrl,
                                 focusNode: _nameFocus,
-                                textCapitalization:
-                                    TextCapitalization.words,
-                                textInputAction: TextInputAction.next,
+                                label: 'Nombres y Apellidos',
+                                hint: 'Ej. María Fernanda Ríos',
+                                icon: CupertinoIcons.person,
+                                accent: accent,
+                                validationEpoch: _validationEpoch,
+                                isDark: isDark,
+                                capitalizeWords: true,
                                 enabled: !_isLoading,
-                                autovalidateMode:
-                                    AutovalidateMode.onUserInteraction,
                                 autofillHints: const [AutofillHints.name],
-                                onFieldSubmitted: (_) =>
-                                    _careerFocus.requestFocus(),
-                                validator: _validateName,
-                                decoration: InputDecoration(
-                                  labelText: 'Nombres y Apellidos',
-                                  prefixIcon: Icon(
-                                    CupertinoIcons.person,
-                                    color: accent,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              TextFormField(
-                                controller: _careerCtrl,
-                                focusNode: _careerFocus,
-                                textCapitalization:
-                                    TextCapitalization.words,
-                                textInputAction: TextInputAction.next,
-                                enabled: !_isLoading,
-                                onFieldSubmitted: (_) =>
+                                onSubmitted: (_) =>
                                     _emailFocus.requestFocus(),
-                                decoration: InputDecoration(
-                                  labelText: 'Carrera / Facultad',
-                                  hintText:
-                                      'Ej. Ing. de Sistemas, Enfermería...',
-                                  prefixIcon: Icon(
-                                    CupertinoIcons.building_2_fill,
-                                    color: accent,
-                                  ),
-                                ),
+                                validator: (v) => _validateName(v),
                               ),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 14),
                             ],
-                            TextFormField(
+                            PremiumTextField(
                               controller: _emailCtrl,
                               focusNode: _emailFocus,
+                              label: 'Correo Institucional',
+                              hint: 'tu_codigo@ucss.pe',
+                              icon: CupertinoIcons.mail,
+                              accent: accent,
+                                validationEpoch: _validationEpoch,
+                              isDark: isDark,
                               keyboardType: TextInputType.emailAddress,
-                              autocorrect: false,
-                              textInputAction: TextInputAction.next,
                               enabled: !_isLoading,
-                              autofocus: !_isSignUp,
-                              autovalidateMode:
-                                  AutovalidateMode.onUserInteraction,
                               autofillHints: const [AutofillHints.email],
-                              onFieldSubmitted: (_) =>
-                                  _passwordFocus.requestFocus(),
-                              validator: _validateEmail,
-                              decoration: InputDecoration(
-                                labelText: 'Correo Institucional',
-                                hintText: 'tu_codigo@ucss.pe',
-                                prefixIcon: Icon(
-                                  CupertinoIcons.mail,
-                                  color: accent,
-                                ),
-                              ),
+                              onSubmitted: (_) => _passwordFocus.requestFocus(),
+                              validator: (v) => _validateEmail(v),
                             ),
                             const SizedBox(height: 12),
-                            TextFormField(
+                            PremiumTextField(
                               controller: _passwordCtrl,
                               focusNode: _passwordFocus,
+                              label: 'Contraseña',
+                              hint: 'Mínimo 6 caracteres',
+                              icon: CupertinoIcons.lock,
+                              accent: accent,
+                                validationEpoch: _validationEpoch,
+                              isDark: isDark,
                               obscureText: _obscurePassword,
                               enabled: !_isLoading,
-                              autovalidateMode:
-                                  AutovalidateMode.onUserInteraction,
+                              showSuffix: true,
+                              suffixTooltip: _obscurePassword
+                                  ? 'Mostrar contraseña'
+                                  : 'Ocultar contraseña',
+                              onTapSuffix: () =>
+                                  setState(() => _obscurePassword = !_obscurePassword),
                               textInputAction: _isSignUp
                                   ? TextInputAction.next
                                   : TextInputAction.done,
@@ -673,111 +449,74 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                     ? AutofillHints.newPassword
                                     : AutofillHints.password,
                               ],
-                              onFieldSubmitted: (_) => _isSignUp
+                              onSubmitted: (_) => _isSignUp
                                   ? _confirmFocus.requestFocus()
                                   : _handleSubmit(),
-                              validator: _validatePassword,
-                              decoration: InputDecoration(
-                                labelText: 'Contraseña',
-                                prefixIcon: Icon(
-                                  CupertinoIcons.lock,
-                                  color: accent,
-                                ),
-                                suffixIcon: IconButton(
-                                  tooltip: _obscurePassword
-                                      ? 'Mostrar contraseña'
-                                      : 'Ocultar contraseña',
-                                  icon: Icon(
-                                    _obscurePassword
-                                        ? CupertinoIcons.eye_slash
-                                        : CupertinoIcons.eye,
-                                    color: textSecondary,
-                                    size: 20,
-                                  ),
-                                  onPressed: () => setState(
-                                    () =>
-                                        _obscurePassword = !_obscurePassword,
-                                  ),
-                                ),
-                              ),
+                              onChanged: (_) => setState(() {}),
+                              validator: (v) => _validatePassword(v),
                             ),
                             if (_isSignUp) ...[
                               const SizedBox(height: 8),
-                              _buildPasswordStrength(
+                              PasswordStrengthMeter(
+                                password: _passwordCtrl.text,
                                 textSecondary: textSecondary,
                                 errorColor: errorColor,
                                 successColor: successColor,
+                                warningColor: warningColor,
                               ),
                               const SizedBox(height: 12),
-                              TextFormField(
+                              PremiumTextField(
                                 controller: _confirmCtrl,
                                 focusNode: _confirmFocus,
+                                label: 'Confirmar Contraseña',
+                                icon: CupertinoIcons.lock_rotation,
+                                accent: accent,
+                                validationEpoch: _validationEpoch,
+                                isDark: isDark,
                                 obscureText: _obscureConfirm,
                                 enabled: !_isLoading,
-                                autovalidateMode:
-                                    AutovalidateMode.onUserInteraction,
+                                showSuffix: true,
+                                suffixTooltip: _obscureConfirm
+                                    ? 'Mostrar contraseña'
+                                    : 'Ocultar contraseña',
+                                onTapSuffix: () =>
+                                    setState(() => _obscureConfirm = !_obscureConfirm),
                                 textInputAction: TextInputAction.next,
-                                autofillHints: const [
-                                  AutofillHints.newPassword,
-                                ],
-                                onFieldSubmitted: (_) =>
-                                    _phoneFocus.requestFocus(),
-                                validator: _validateConfirm,
-                                decoration: InputDecoration(
-                                  labelText: 'Confirmar Contraseña',
-                                  prefixIcon: Icon(
-                                    CupertinoIcons.lock_rotation,
-                                    color: accent,
-                                  ),
-                                  suffixIcon: IconButton(
-                                    tooltip: _obscureConfirm
-                                        ? 'Mostrar contraseña'
-                                        : 'Ocultar contraseña',
-                                    icon: Icon(
-                                      _obscureConfirm
-                                          ? CupertinoIcons.eye_slash
-                                          : CupertinoIcons.eye,
-                                      color: textSecondary,
-                                      size: 20,
-                                    ),
-                                    onPressed: () => setState(
-                                      () =>
-                                          _obscureConfirm = !_obscureConfirm,
-                                    ),
-                                  ),
-                                ),
+                                autofillHints: const [AutofillHints.newPassword],
+                                onSubmitted: (_) => _phoneFocus.requestFocus(),
+                                validator: (v) => _validateConfirm(v),
                               ),
                               const SizedBox(height: 12),
-                              TextFormField(
+                              PremiumTextField(
                                 controller: _phoneCtrl,
                                 focusNode: _phoneFocus,
+                                label: 'WhatsApp / Celular (opcional)',
+                                hint: '999 888 777',
+                                icon: CupertinoIcons.phone,
+                                accent: accent,
+                                validationEpoch: _validationEpoch,
+                                isDark: isDark,
                                 keyboardType: TextInputType.phone,
-                                textInputAction: TextInputAction.done,
                                 enabled: !_isLoading,
-                                autofillHints: const [
-                                  AutofillHints.telephoneNumber,
-                                ],
-                                onFieldSubmitted: (_) => _handleSubmit(),
-                                decoration: InputDecoration(
-                                  labelText: 'WhatsApp / Celular (Opcional)',
-                                  hintText: '999 888 777',
-                                  prefixIcon: Icon(
-                                    CupertinoIcons.phone,
-                                    color: accent,
-                                  ),
-                                ),
+                                textInputAction: TextInputAction.done,
+                                autofillHints: const [AutofillHints.telephoneNumber],
+                                onSubmitted: (_) => _handleSubmit(),
                               ),
-                              const SizedBox(height: 12),
-                              // Términos y privacidad
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                            ],
+                            Padding(
+                              // Margen a la izquierda para que el checkbox no
+                              // quede pegado al borde de la tarjeta.
+                              padding: const EdgeInsets.only(left: 2, right: 6),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
+                                  // Sin `SizedBox` forzado: el `Checkbox` por
+                                  // defecto mide 40x40 con el recuadro de 18
+                                  // centrado, lo que además da un área táctil
+                                  // cómoda. Forzarlo a 24x24 con `compact`
+                                  // descuadraba el recuadro.
                                   Checkbox(
                                     value: _acceptedTerms,
-                                    activeColor: accent,
-                                    materialTapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                    visualDensity: VisualDensity.compact,
                                     onChanged: _isLoading
                                         ? null
                                         : (v) => setState(() {
@@ -787,106 +526,86 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                               }
                                             }),
                                   ),
-                                  const SizedBox(width: 4),
                                   Expanded(
                                     child: Wrap(
                                       crossAxisAlignment:
                                           WrapCrossAlignment.center,
                                       children: [
-                                        Text(
-                                          'Acepto los ',
+                                      Text(
+                                        'Acepto los ',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: textSecondary,
+                                        ),
+                                      ),
+                                      GestureDetector(
+                                        onTap: () => _showInfoDialog(
+                                          'Términos y Condiciones',
+                                          'El uso de UCSS Market es exclusivo para estudiantes con correo @ucss.pe. Las transacciones se realizan entre estudiantes y la plataforma actúa como intermediario de coordinación, no como vendedor. (Texto de ejemplo)',
+                                        ),
+                                        child: Text(
+                                          'Términos',
                                           style: TextStyle(
                                             fontSize: 12,
-                                            color: textSecondary,
+                                            color: accent,
+                                            fontWeight: FontWeight.w600,
+                                            decoration:
+                                                TextDecoration.underline,
+                                            decorationColor: accent,
                                           ),
                                         ),
-                                        GestureDetector(
-                                          onTap: () => _showInfoDialog(
-                                            'Términos y Condiciones',
-                                            'El uso de UCSS Market es exclusivo para estudiantes con correo @ucss.pe. Las transacciones se realizan entre estudiantes y la plataforma actúa como intermediario de coordinación, no como vendedor. (Texto de ejemplo)',
-                                          ),
-                                          child: Text(
-                                            'Términos',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: accent,
-                                              fontWeight: FontWeight.w600,
-                                              decoration:
-                                                  TextDecoration.underline,
-                                              decorationColor: accent,
-                                            ),
-                                          ),
+                                      ),
+                                      Text(
+                                        ' y la ',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: textSecondary,
                                         ),
-                                        Text(
-                                          ' y la ',
+                                      ),
+                                      GestureDetector(
+                                        onTap: () => _showInfoDialog(
+                                          'Política de Privacidad',
+                                          'Tus datos (nombre, correo institucional, carrera y celular) se usan solo para operar el marketplace dentro del campus. No se comparten con terceros. (Texto de ejemplo)',
+                                        ),
+                                        child: Text(
+                                          'Política de Privacidad',
                                           style: TextStyle(
                                             fontSize: 12,
-                                            color: textSecondary,
+                                            color: accent,
+                                            fontWeight: FontWeight.w600,
+                                            decoration:
+                                                TextDecoration.underline,
+                                            decorationColor: accent,
                                           ),
                                         ),
-                                        GestureDetector(
-                                          onTap: () => _showInfoDialog(
-                                            'Política de Privacidad',
-                                            'Tus datos (nombre, correo institucional, carrera y celular) se usan solo para operar el marketplace dentro del campus. No se comparten con terceros. (Texto de ejemplo)',
-                                          ),
-                                          child: Text(
-                                            'Política de Privacidad',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: accent,
-                                              fontWeight: FontWeight.w600,
-                                              decoration:
-                                                  TextDecoration.underline,
-                                              decorationColor: accent,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              if (_termsError) ...[
-                                const SizedBox(height: 6),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    'Debes aceptar los términos y la política de privacidad',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: errorColor,
-                                    ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
-                            ],
-                            const SizedBox(height: 20),
-                            SizedBox(
-                              width: double.infinity,
-                              height: 50,
-                              child: FilledButton(
-                                onPressed: _isLoading ? null : _handleSubmit,
-                                child: AnimatedSwitcher(
-                                  duration: animDuration,
-                                  child: _isLoading
-                                      ? CupertinoActivityIndicator(
-                                          key: const ValueKey('loading'),
-                                          color: isDark
-                                              ? AppColors.onDarkPrimary
-                                              : AppColors.onPrimary,
-                                        )
-                                      : Text(
-                                          _isSignUp
-                                              ? 'Registrarme en UCSS'
-                                              : 'Ingresar al Campus',
-                                          key: const ValueKey('label'),
-                                          style: const TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
+                            ),
+                            ),
+                            if (_termsError) ...[
+                              const SizedBox(height: 6),
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  'Debes aceptar los términos y la política de privacidad',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: errorColor,
+                                  ),
                                 ),
                               ),
+                            ],
+                            const SizedBox(height: 22),
+                            PrimaryButton(
+                              label: _isSignUp
+                                  ? 'Registrarme en UCSS'
+                                  : 'Ingresar al Campus',
+                              onPressed: _handleSubmit,
+                              isLoading: _isLoading,
+                              isDark: isDark,
                             ),
                             if (!_isSignUp) ...[
                               const SizedBox(height: 4),
@@ -932,103 +651,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildConfirmationView({
-    required Color textPrimary,
-    required Color textSecondary,
-    required Color accent,
-  }) {
-    return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(CupertinoIcons.mail_solid, size: 56, color: accent),
-                const SizedBox(height: 16),
-                Text(
-                  'Revisa tu correo',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Enviamos un enlace de confirmación a $_pendingEmail.\nConfírmalo y luego inicia sesión.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 14,
-                    height: 1.4,
-                    color: textSecondary,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: FilledButton(
-                    onPressed: () => setState(() {
-                      _awaitingConfirmation = false;
-                      _isSignUp = false;
-                      _submitted = false;
-                      _touched.clear();
-                      _acceptedTerms = false;
-                    }),
-                    child: const Text('Volver a iniciar sesión'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPasswordStrength({
-    required Color textSecondary,
-    required Color errorColor,
-    required Color successColor,
-  }) {
-    final score = _passwordScore;
-    final labels = ['Muy débil', 'Débil', 'Aceptable', 'Fuerte'];
-    final color = score <= 1
-        ? errorColor
-        : (score == 2 ? AppColors.warning : successColor);
-
-    return Row(
-      children: [
-        Expanded(
-          child: Row(
-            children: List.generate(4, (i) {
-              return Expanded(
-                child: Container(
-                  height: 4,
-                  margin: EdgeInsets.only(right: i < 3 ? 4 : 0),
-                  decoration: BoxDecoration(
-                    color: i < score
-                        ? color
-                        : textSecondary.withValues(alpha: 0.25),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              );
-            }),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Text(
-          labels[score.clamp(0, 3)],
-          style: TextStyle(fontSize: 11, color: color),
-        ),
-      ],
     );
   }
 }

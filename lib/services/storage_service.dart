@@ -71,8 +71,16 @@ class StorageService {
     return publicUrl;
   }
 
-  /// Sube un comprobante de pago / voucher a la carpeta de vouchers
-  static Future<String> uploadVoucherImage(XFile voucherFile) async {
+  /// Sube un comprobante de pago / voucher al bucket PRIVADO `payment-vouchers`.
+  /// Ruta: {user_id}/voucher_{orderId}_{timestamp}.{ext}
+  ///
+  /// Devuelve el *path* relativo dentro del bucket, no una URL. El path se
+  /// persiste en `payments.voucher_path` y se convierte en una URL firmada de
+  /// corta duración con [createVoucherSignedUrl] en el momento de visualizarlo.
+  static Future<String> uploadVoucherImage(
+    XFile voucherFile, {
+    String? orderId,
+  }) async {
     final user = _supabase.auth.currentUser;
     if (user == null) {
       throw Exception('Debes iniciar sesión para subir el comprobante');
@@ -82,18 +90,34 @@ class StorageService {
     final fileExt = _getFileExtension(voucherFile);
     final contentType = _getContentType(fileExt);
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final path = '${user.id}/voucher_$timestamp.$fileExt';
+    final orderPart = (orderId != null && orderId.isNotEmpty)
+        ? '${orderId}_'
+        : '';
+    final path = '${user.id}/voucher_$orderPart$timestamp.$fileExt';
 
     await _supabase.storage
-        .from(SupabaseConfig.productImagesBucket)
+        .from(SupabaseConfig.vouchersBucket)
         .uploadBinary(
           path,
           bytes,
-          fileOptions: FileOptions(contentType: contentType, upsert: true),
+          fileOptions: FileOptions(contentType: contentType, upsert: false),
         );
 
-    return _supabase.storage
-        .from(SupabaseConfig.productImagesBucket)
-        .getPublicUrl(path);
+    return path;
+  }
+
+  /// Genera una URL firmada de corta duración para un comprobante almacenado en
+  /// el bucket privado. Devuelve `null` si no se pudo firmar.
+  ///
+  /// La política RLS de `storage.objects` permite firmar comprobantes solo a las
+  /// partes involucradas en la orden (comprador y vendedor).
+  static Future<String?> createVoucherSignedUrl(String path) async {
+    try {
+      return await _supabase.storage
+          .from(SupabaseConfig.vouchersBucket)
+          .createSignedUrl(path, SupabaseConfig.voucherSignedUrlTtl);
+    } catch (_) {
+      return null;
+    }
   }
 }

@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/order.dart';
+import '../services/storage_service.dart';
 import 'auth_provider.dart';
 
 final myOrdersProvider = FutureProvider<List<Order>>((ref) async {
@@ -10,13 +12,9 @@ final myOrdersProvider = FutureProvider<List<Order>>((ref) async {
   try {
     final response = await Supabase.instance.client
         .from('orders')
-        .select('''
-          *,
-          order_items (*, products (*)),
-          delivery_spots (*),
-          payments (*),
-          seller_profile:profiles!orders_seller_id_fkey (*)
-        ''')
+        .select(
+          '*, order_items (*, products (*)), delivery_spots (*), payments (*), seller_profile:profiles!orders_seller_id_fkey (*)',
+        )
         .eq('buyer_id', user.id)
         .order('created_at', ascending: false);
 
@@ -24,6 +22,7 @@ final myOrdersProvider = FutureProvider<List<Order>>((ref) async {
         .map((item) => Order.fromJson(item as Map<String, dynamic>))
         .toList();
   } catch (e) {
+    debugPrint('Error cargando compras: $e');
     return [];
   }
 });
@@ -35,13 +34,9 @@ final mySalesProvider = FutureProvider<List<Order>>((ref) async {
   try {
     final response = await Supabase.instance.client
         .from('orders')
-        .select('''
-          *,
-          order_items (*, products (*)),
-          delivery_spots (*),
-          payments (*),
-          buyer_profile:profiles!orders_buyer_id_fkey (*)
-        ''')
+        .select(
+          '*, order_items (*, products (*)), delivery_spots (*), payments (*), buyer_profile:profiles!orders_buyer_id_fkey (*)',
+        )
         .eq('seller_id', user.id)
         .order('created_at', ascending: false);
 
@@ -49,10 +44,15 @@ final mySalesProvider = FutureProvider<List<Order>>((ref) async {
         .map((item) => Order.fromJson(item as Map<String, dynamic>))
         .toList();
   } catch (e) {
+    debugPrint('Error cargando ventas: $e');
     return [];
   }
 });
 
+/// Firma de la RPC `process_order_payment` en PostgreSQL.
+///
+/// El monto y el método se resuelven SIEMPRE en el servidor a partir de los
+/// ítems de la orden; el cliente solo indica que adjunta comprobante.
 class OrderActionsNotifier extends StateNotifier<AsyncValue<void>> {
   OrderActionsNotifier() : super(const AsyncValue.data(null));
 
@@ -114,35 +114,33 @@ class OrderActionsNotifier extends StateNotifier<AsyncValue<void>> {
     }
   }
 
-  /// Registra el pago en la tabla `payments` y actualiza la orden
+  /// Registra el pago invocando la RPC `process_order_payment`.
+  ///
+  /// El monto **no** se envía desde el dispositivo: la función SQL lo calcula
+  /// desde `orders.total_amount`, de modo que un cliente modificado no puede
+  /// registrar un pago de S/ 0.01 por una orden de S/ 500.
+  ///
+  /// [voucherPath] es el path dentro del bucket privado `payment-vouchers`.
   Future<void> processPayment({
     required String orderId,
-    required double amount,
     required String paymentMethod,
-    String? voucherUrl,
+    String? voucherPath,
   }) async {
     state = const AsyncValue.loading();
     try {
-      // Inserción en tabla payments:
-      // columnas: order_id, method_type, amount, status, voucher_url
-      final status = paymentMethod == 'efectivo' ? 'aprobado' : 'pendiente';
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) {
+        throw Exception('Debes iniciar sesión para pagar');
+      }
 
-      await Supabase.instance.client.from('payments').insert({
-        'order_id': orderId,
-        'method_type': paymentMethod, // 'yape', 'plin', 'efectivo', 'tarjeta'
-        'amount': amount,
-        'status': status,
-        'voucher_url': voucherUrl,
-      });
-
-      // Actualizar paid_amount y status en la orden
-      final newOrderStatus =
-          paymentMethod == 'efectivo' ? 'pagado' : 'pago_en_revision';
-
-      await Supabase.instance.client.from('orders').update({
-        'status': newOrderStatus,
-        'paid_amount': amount,
-      }).eq('id', orderId);
+      await Supabase.instance.client.rpc(
+        'process_order_payment',
+        params: {
+          'p_order_id': orderId,
+          'p_payment_method': paymentMethod,
+          'p_voucher_path': voucherPath,
+        },
+      );
 
       state = const AsyncValue.data(null);
     } catch (e, st) {
@@ -160,6 +158,10 @@ class OrderActionsNotifier extends StateNotifier<AsyncValue<void>> {
   /// Actualiza el estado de una orden validando la transición.
   ///   pago_en_revision -> pagado     (el vendedor aprueba el voucher)
   ///   pagado           -> entregado  (el vendedor entrega el producto)
+  ///
+  /// Solo el vendedor de la orden puede ejecutar esta transición. La
+  /// comprobación se hace en el cliente (evita un round-trip inútil) y la
+  /// garantía real está en la política RLS `orders_seller_update` del servidor.
   Future<void> updateOrderStatus({
     required String orderId,
     required String newStatus,
@@ -173,9 +175,16 @@ class OrderActionsNotifier extends StateNotifier<AsyncValue<void>> {
 
       final current = await Supabase.instance.client
           .from('orders')
-          .select('status')
+          .select('status, seller_id')
           .eq('id', orderId)
           .single();
+
+      // Autorización: solo el vendedor de la orden puede cambiar su estado.
+      // Sin esto, cualquier usuario autenticado con el id de la orden podía
+      // aprobar pagos o marcar entregas ajenas.
+      if (current['seller_id'] != user.id) {
+        throw Exception('Solo el vendedor de esta orden puedeActualizarla');
+      }
 
       final currentStatus = current['status'] as String?;
       if (currentStatus == null ||
@@ -188,7 +197,8 @@ class OrderActionsNotifier extends StateNotifier<AsyncValue<void>> {
       await Supabase.instance.client
           .from('orders')
           .update({'status': newStatus})
-          .eq('id', orderId);
+          .eq('id', orderId)
+          .eq('seller_id', user.id);
 
       // Al aprobar el pago, marca también el comprobante como aprobado
       if (newStatus == 'pagado') {
@@ -207,6 +217,8 @@ class OrderActionsNotifier extends StateNotifier<AsyncValue<void>> {
 
   /// El vendedor rechaza el comprobante: marca el pago como rechazado y
   /// devuelve la orden a `pendiente_pago` para que el comprador vuelva a pagar.
+  ///
+  /// Solo el vendedor de la orden puede rechazar el pago.
   Future<void> rejectPayment({required String orderId}) async {
     state = const AsyncValue.loading();
     try {
@@ -217,9 +229,13 @@ class OrderActionsNotifier extends StateNotifier<AsyncValue<void>> {
 
       final current = await Supabase.instance.client
           .from('orders')
-          .select('status')
+          .select('status, seller_id')
           .eq('id', orderId)
           .single();
+
+      if (current['seller_id'] != user.id) {
+        throw Exception('Solo el vendedor de esta orden puede rechazar el pago');
+      }
 
       if ((current['status'] as String?) != 'pago_en_revision') {
         throw Exception('La orden no está en revisión de pago');
@@ -228,13 +244,13 @@ class OrderActionsNotifier extends StateNotifier<AsyncValue<void>> {
       await Supabase.instance.client
           .from('payments')
           .update({'status': 'rechazado'})
-          .eq('order_id', orderId)
-          .inFilter('status', ['pendiente', 'en_revision']);
+          .eq('order_id', orderId);
 
       await Supabase.instance.client
           .from('orders')
           .update({'status': 'pendiente_pago', 'paid_amount': 0})
-          .eq('id', orderId);
+          .eq('id', orderId)
+          .eq('seller_id', user.id);
 
       state = const AsyncValue.data(null);
     } catch (e, st) {
@@ -246,5 +262,16 @@ class OrderActionsNotifier extends StateNotifier<AsyncValue<void>> {
 
 final orderActionsProvider =
     StateNotifierProvider<OrderActionsNotifier, AsyncValue<void>>((ref) {
-  return OrderActionsNotifier();
-});
+      return OrderActionsNotifier();
+    });
+
+/// URL firmada de corta duración para un comprobante de pago.
+///
+/// El bucket `payment-vouchers` es privado, así que la imagen solo se puede
+/// renderizar con una URL firmada válida. La URL expira en 15 minutos, por lo
+/// que conviene refrescar el provider si la vista lleva mucho tiempo abierta.
+final voucherSignedUrlProvider =
+    FutureProvider.family<String?, String>((ref, voucherPath) async {
+      if (voucherPath.isEmpty) return null;
+      return StorageService.createVoucherSignedUrl(voucherPath);
+    });

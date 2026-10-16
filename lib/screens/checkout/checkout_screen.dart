@@ -1,7 +1,4 @@
-import 'dart:io';
-
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
@@ -11,6 +8,7 @@ import '../../models/product.dart';
 import '../../providers/catalog_provider.dart';
 import '../../providers/orders_provider.dart';
 import '../../services/storage_service.dart';
+import '../../widgets/local_image_preview.dart';
 
 class CheckoutScreen extends ConsumerStatefulWidget {
   final Product product;
@@ -73,7 +71,9 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     setState(() => _isProcessing = true);
 
     try {
-      final total = widget.product.price * _quantity;
+      // El total NO se envía al servidor: la RPC `process_order_payment` lo
+      // calcula desde `orders.total_amount`. Enviarlo desde el cliente
+      // permitiría manipular el monto del pago.
 
       // Si es un producto de demostración local (mock inicial)
       if (widget.product.id.startsWith('c0000000-')) {
@@ -98,20 +98,24 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
             clientRequestId: _clientRequestId,
           );
 
-      // 2. Si subió voucher, enviarlo a Supabase Storage
-      String? voucherUrl;
+      // 2. Si subió voucher, enviarlo al bucket privado `payment-vouchers`.
+      //    Se persiste el path, no una URL: la URL firmada se genera al ver.
+      String? voucherPath;
       if (_voucherImage != null) {
-        voucherUrl = await StorageService.uploadVoucherImage(_voucherImage!);
+        voucherPath = await StorageService.uploadVoucherImage(
+          _voucherImage!,
+          orderId: orderId,
+        );
       }
 
-      // 3. Procesar Pago con RPC `process_order_payment`
+      // 3. Procesar Pago con RPC `process_order_payment`.
+      //    El monto lo calcula el servidor; no se envía desde el dispositivo.
       await ref
           .read(orderActionsProvider.notifier)
           .processPayment(
             orderId: orderId,
-            amount: total,
             paymentMethod: _paymentMethod,
-            voucherUrl: voucherUrl,
+            voucherPath: voucherPath,
           );
 
       // Invalida catálogo y órdenes para refrescar stock y lista de compras
@@ -165,9 +169,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     final background = isError
         ? (isDark ? AppColors.darkError : AppColors.error)
         : (isDark ? AppColors.darkSuccess : AppColors.success);
-    final foreground = isDark && !isError
-        ? AppColors.darkBackground
-        : AppColors.onPrimary;
+    final foreground = isDark ? AppColors.darkBackground : AppColors.onPrimary;
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -559,15 +561,14 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                                   child: SizedBox(
                                     width: 48,
                                     height: 48,
-                                    child: kIsWeb
-                                        ? Image.network(
-                                            _voucherImage!.path,
-                                            fit: BoxFit.cover,
-                                          )
-                                        : Image.file(
-                                            File(_voucherImage!.path),
-                                            fit: BoxFit.cover,
-                                          ),
+                                    child: LocalImagePreview(
+                                      file: _voucherImage!,
+                                      placeholder: Icon(
+                                        CupertinoIcons.photo,
+                                        size: 18,
+                                        color: textSecondary,
+                                      ),
+                                    ),
                                   ),
                                 ),
                                 const SizedBox(width: 10),
